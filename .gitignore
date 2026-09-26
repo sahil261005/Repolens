@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.venv/
+env/
+venv/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Python caches and artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Local databases and model caches
+backend/data/
+backend/.cache/
+.cache/
+data/
+*.db
+*.db-journal
+
+# Frontend build outputs
+frontend/dist/
+frontend/dist-ssr/
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project metadata / tool sidecars
+.kilo/
+graphify-out/
