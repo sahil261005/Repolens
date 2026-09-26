@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+requests
+networkx
+sentence-transformers
+numpy
+slowapi
+groq
+python-dotenv
