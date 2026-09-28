@@ -91,9 +91,19 @@ npm run build
 
 GitHub Actions repeats the backend unit tests and frontend production build on every push and pull request.
 
+## Lessons learned
+
+- **Vector search alone doesn't answer relationship questions.** Early on, I tried pure semantic search, but queries like "who authored the login fix?" returned random text that happened to mention logins. Adding the graph traversal arm and fusing both signals fixed this — relational queries now surface authorship paths instead of keyword matches.
+- **Overlap is lexical, not causal — and that's intentional.** I considered using the LLM to judge whether each item "influenced" the answer, but that would be slow, expensive, and just as unreliable. Simple shared-token overlap is transparent: you can see exactly why an item was flagged as used or dead weight. The limitation is clearly stated in the UI.
+- **Recency decay needs a floor.** My first version used pure exponential decay, which made anything older than a few months basically invisible. Adding a `0.35` floor means old items are deprioritised but not erased — useful when someone asks about historical decisions.
+- **Client-side reranking was a happy accident.** I originally built the weight slider to re-query the server on every change, but it was too slow. Sending all the per-arm scores to the frontend and recomputing the fusion client-side made the slider feel instant. The tradeoff is that the graph traversal seeds don't change (those are fixed at query time), but for exploring weight sensitivity it works well enough.
+
 ## Known limitations
 
 - Public repositories only; the app reads the latest 30 PRs, 30 issues, and 50 commits rather than full history.
 - Graphs and embeddings remain in memory and are lost on backend restart. SQLite persists analysis summaries and query experiments, not the graph itself.
 - The app uses free-tier GitHub and Groq APIs. GitHub limits anonymous access; free deployments may cold-start.
 - The overlap metric is lexical, not a measure of causal evidence use.
+
+
+

@@ -59,7 +59,7 @@ class GraphAndOverlapTests(unittest.TestCase):
         self.assertEqual(results["person:leo"], (0.675, ["pull_request:12", "issue:7", "person:leo"]))
 
     def test_hub_throttling_per_relation(self):
-        """Verify that an author with 15 PRs has AUTHORED relation throttled to 10."""
+        # make sure an author with 15 PRs gets throttled to 10 in traversal
         prs = [
             {"number": i, "title": f"PR {i}", "body": "", "author": "super_dev"}
             for i in range(1, 16)
@@ -71,12 +71,12 @@ class GraphAndOverlapTests(unittest.TestCase):
         self.assertLessEqual(len(authored_hits), 10)
 
     def test_recency_decay_floor_and_missing_date(self):
-        # Missing date -> factor is 1.0 (never penalized)
+        # missing date should never be penalized
         age, factor = recency_details({"type": "issue", "created_at": None})
         self.assertIsNone(age)
         self.assertEqual(factor, 1.0)
 
-        # Extremely old item -> hits 0.35 floor
+        # really old item should hit the 0.35 floor
         old_date = (datetime.now(timezone.utc) - timedelta(days=5000)).isoformat()
         _, old_factor = recency_details({"type": "issue", "created_at": old_date})
         self.assertEqual(old_factor, 0.35)
@@ -93,6 +93,7 @@ class GraphAndOverlapTests(unittest.TestCase):
         self.assertEqual(confidence_level(None), "unknown")
 
     def test_overlap_honest_fallback_on_failure(self):
+        # when answer generation fails, everything should be marked unknown
         trace = {
             "final_results": [
                 {"id": "issue:7", "text": "Login bug details"}
@@ -143,6 +144,7 @@ class GraphAndOverlapTests(unittest.TestCase):
             parse_repo_url("not-a-valid-url-format-at-all")
 
     def test_github_client_filters_prs_from_issues(self):
+        # github returns PRs in the issues list too, so we need to filter
         item_normal = {"number": 1, "title": "Normal Issue", "user": {"login": "dev"}}
         item_pr = {"number": 2, "title": "PR in issues list", "pull_request": {}, "user": {"login": "dev"}}
         raw_issues = [item_normal, item_pr]

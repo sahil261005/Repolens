@@ -1,4 +1,4 @@
-"""Fetch a small, public slice of a GitHub repository."""
+"""Fetches public GitHub data - PRs, issues, commits."""
 
 import re
 
@@ -10,7 +10,7 @@ REQUEST_TIMEOUT = 15
 
 
 def parse_repo_url(repo_url):
-    """Return owner and repository name from a GitHub URL or owner/name."""
+    """Parse a GitHub URL or owner/repo string into (owner, name)."""
     value = (repo_url or "").strip().rstrip("/")
     url_match = re.fullmatch(r"https?://github\.com/([^/]+)/([^/]+)", value)
     short_match = re.fullmatch(r"([^/\s]+)/([^/\s]+)", value)
@@ -32,7 +32,8 @@ def parse_repo_url(repo_url):
 
 def request_data(path, token):
     headers = {"Accept": "application/vnd.github+json"}
-    if token:
+    # ignore empty or placeholder tokens from .env
+    if token and not token.startswith("your_"):
         headers["Authorization"] = f"Bearer {token}"
 
     try:
@@ -56,6 +57,7 @@ def request_data(path, token):
 
 
 def compact_item(item):
+    # only keep the fields we actually need - the raw API response is huge
     user = item.get("user") or {}
     return {
         "number": item.get("number"),
@@ -81,13 +83,14 @@ def compact_commit(item):
 
 
 def fetch_repo_data(owner, name, token=None):
-    """Fetch recent PRs, issues, and commits with only needed fields."""
+    """Grab recent PRs, issues, and commits from the GitHub API."""
     pull_requests = request_data(f"/repos/{owner}/{name}/pulls?state=all&per_page=30", token)
     issues = request_data(f"/repos/{owner}/{name}/issues?state=all&per_page=30", token)
     commits = request_data(f"/repos/{owner}/{name}/commits?per_page=50", token)
 
     return {
         "pull_requests": [compact_item(item) for item in pull_requests],
+        # github returns PRs inside the issues endpoint too, so filter them out
         "issues": [
             compact_item(item)
             for item in issues

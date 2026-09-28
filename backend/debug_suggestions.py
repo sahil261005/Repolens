@@ -1,16 +1,13 @@
-"""Retrieval debugging suggestions for the Debug Layer."""
+"""Generates debugging suggestions based on retrieval behavior.
+
+Shows things like "your vector scores are low, try adjusting weights"
+or "this item was retrieved but contributed nothing to the answer".
+"""
 
 import math
 
 
 def generate_suggestions(trace, results):
-    """Generate actionable debugging suggestions based on retrieval behavior.
-
-    Returns a list of suggestions like:
-    - "Low vector scores: Try reducing vector weight to 0.5"
-    - "Graph candidates limited: Increase traversal depth to 2 hops"
-    - "Old results penalized: Recency decay is filtering recent items"
-    """
     suggestions = []
 
     if not results:
@@ -29,6 +26,7 @@ def generate_suggestions(trace, results):
     graph_weight = weights.get("graph", 0.2)
     intent = trace.get("intent", "semantic")
 
+    # check if the retrieval mode matches the actual results
     if intent == "relational" and avg_graph < 0.1:
         suggestions.append(
             {
@@ -66,6 +64,7 @@ def generate_suggestions(trace, results):
             }
         )
 
+    # flag when nothing got high confidence
     used_count = sum(1 for r in results if r.get("confidence") == "high")
     if used_count == 0 and len(results) > 0:
         suggestions.append(
@@ -76,6 +75,7 @@ def generate_suggestions(trace, results):
             }
         )
 
+    # flag individual dead weight items
     for result in results:
         if result.get("confidence") == "low":
             label = result.get("label", "Item")
@@ -91,7 +91,7 @@ def generate_suggestions(trace, results):
 
 
 def analyze_dead_weight(trace):
-    """Find items that were retrieved but didn't meaningfully contribute."""
+    """Find items that were retrieved but didn't really contribute."""
     dead_weight = []
 
     for result in trace.get("final_results", []):
@@ -111,7 +111,7 @@ def analyze_dead_weight(trace):
 
 
 def suggest_weight_adjustments(trace, results):
-    """Suggest optimal weight splits based on retrieval quality."""
+    """Suggest better weight splits based on what the retrieval actually returned."""
     suggestions = []
 
     vector_hits = trace.get("vector_hits", [])
@@ -141,7 +141,7 @@ def suggest_weight_adjustments(trace, results):
 
 
 def compile_debug_report(trace):
-    """Compile all debugging suggestions into a structured report."""
+    """Pull all the diagnostic info together into one report for the frontend."""
     suggestions = generate_suggestions(trace, trace.get("final_results", []))
     suggestions.extend(suggest_weight_adjustments(trace, trace.get("final_results", [])))
 
@@ -151,5 +151,5 @@ def compile_debug_report(trace):
         "has_problems": len(suggestions) > 0 or len(dead_weight) > 2,
         "problems_found": len(suggestions),
         "dead_weight_items": dead_weight,
-        "suggestions": suggestions[:5],
+        "suggestions": suggestions[:5],  # cap at 5 to not overwhelm the UI
     }

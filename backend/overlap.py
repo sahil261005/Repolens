@@ -1,4 +1,5 @@
-"""Lexical overlap analysis and confidence scoring for retrieved items and answers."""
+"""Lexical overlap analysis - checks how much of the retrieved text
+actually ended up in the generated answer."""
 
 import re
 
@@ -37,13 +38,18 @@ MEDIUM_CONFIDENCE_THRESHOLD = 0.2
 
 
 def tokens(text):
-    """Return meaningful lowercase tokens for a simple lexical comparison."""
+    """Split text into lowercase tokens, removing stopwords and short words."""
     words = re.split(r"[^a-z0-9]+", (text or "").lower())
     return {word for word in words if len(word) > 2 and word not in STOPWORDS}
 
 
 def answer_overlap(item_text, answer_text):
-    """Return shared-token fraction, normalised by the smaller token set."""
+    """Shared-token fraction between an item and the answer.
+
+    Normalizes by the smaller set - this way a short item that's fully
+    quoted in the answer gets a high score, which felt more useful than
+    normalizing by the larger set.
+    """
     answer_tokens = tokens(answer_text)
     item_tokens = tokens(item_text)
     if not answer_tokens or not item_tokens:
@@ -55,12 +61,12 @@ def answer_overlap(item_text, answer_text):
 
 
 def confidence_level(overlap):
-    """Map a lexical overlap score to a human-readable confidence band.
+    """Map overlap score to a confidence band.
 
-    High:   overlap >= 0.5  — item text appears directly in the answer
-    Medium: overlap >= 0.2  — some shared tokens, likely relevant
-    Low:    overlap < 0.2   — retrieved but barely referenced
-    Unknown: answer was not generated or overlap could not be computed
+    >= 0.5 -> high (text appears directly in answer)
+    >= 0.2 -> medium (some shared terms)
+    < 0.2  -> low (barely referenced, probably dead weight)
+    None   -> unknown (answer wasn't generated)
     """
     if overlap is None:
         return "unknown"
@@ -72,7 +78,7 @@ def confidence_level(overlap):
 
 
 def estimate_tokens(text):
-    """Rough token count estimation (~1.3 tokens per whitespace-separated word)."""
+    # rough estimate: ~1.3 tokens per word. good enough for the UI
     if not text:
         return 0
     words = len(text.split())
@@ -80,9 +86,10 @@ def estimate_tokens(text):
 
 
 def add_overlap_analysis(trace, answer):
-    """Annotate final results with shared tokens, confidence bands, and token metrics.
+    """Annotate each result with overlap info and compute summary stats.
 
-    This is a lexical signal, not proof that an item caused the model's answer.
+    Important: this is a lexical signal, NOT proof that an item caused
+    the model's answer. Paraphrased content won't show up as overlap.
     """
     results = trace.get("final_results", [])
     answer_generated = bool(answer) and answer != ANSWER_FAILURE
@@ -105,6 +112,8 @@ def add_overlap_analysis(trace, answer):
         item["token_estimate"] = item_token_est
         total_context_tokens += item_token_est
 
+        # if answer generation failed, mark everything as unknown
+        # rather than pretending nothing was used
         if not answer_generated:
             item["answer_overlap"] = None
             item["shared_tokens"] = []
@@ -156,4 +165,3 @@ def add_overlap_analysis(trace, answer):
         else 0,
     }
     return trace
-

@@ -1,4 +1,4 @@
-"""Graph traversal used by the hybrid retriever."""
+"""Graph traversal + hybrid retrieval logic."""
 
 import heapq
 from datetime import datetime, timezone
@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from llm import classify_intent
 
 
+# cap how many neighbours we follow per relation type,
+# otherwise a single prolific author floods the results
 MAX_NEIGHBOURS_PER_RELATION = 10
+
+# half-life in days for recency decay per node type
+# issues decay fast (21d), people barely decay (180d)
 HALF_LIVES = {
     "issue": 21,
     "commit": 45,
@@ -16,7 +21,7 @@ HALF_LIVES = {
 
 
 def grouped_neighbours(graph, node_id):
-    """Group neighbouring nodes by edge relation for relation-level throttling."""
+    """Group a node's neighbours by edge relation so we can throttle per-relation."""
     groups = {}
 
     for neighbour_id, edge in graph[node_id].items():
@@ -30,11 +35,11 @@ def grouped_neighbours(graph, node_id):
 
 
 def graph_search(graph, seed_node_ids, max_hops=2):
-    """Walk from seed nodes, scoring each path by its edge-weight product.
+    """Walk from seed nodes using a priority queue, scoring paths by edge-weight product.
 
-    A priority queue makes sure the best known path is expanded first. The
-    returned path includes the seed and the resulting node so the UI can draw
-    exactly what the traversal followed.
+    Tried plain BFS first but it doesn't account for edge weights at all -
+    a priority queue expands the best-scoring path first so we get
+    higher quality results without visiting everything.
     """
     if max_hops < 0:
         return []
@@ -61,6 +66,7 @@ def graph_search(graph, seed_node_ids, max_hops=2):
 
         for neighbours in grouped_neighbours(graph, node_id).values():
             for neighbour_id, edge in neighbours[:MAX_NEIGHBOURS_PER_RELATION]:
+                # don't revisit nodes already in this path
                 if neighbour_id in path:
                     continue
 
@@ -85,7 +91,8 @@ def graph_search(graph, seed_node_ids, max_hops=2):
 
 
 def recency_details(node):
-    """Return an age and decay factor, without penalising missing dates."""
+    """Calculate how old a node is and apply decay. Missing dates get factor=1.0
+    so we never penalize items just because github didn't give us a timestamp."""
     created_at = node.get("created_at")
     if not created_at:
         return None, 1.0
@@ -102,20 +109,28 @@ def recency_details(node):
     if not half_life:
         return age_days, 1.0
 
+    # exponential decay with a floor of 0.35 so old items aren't completely invisible
     factor = 0.5 ** (age_days / half_life)
     return age_days, max(factor, 0.35)
 
 
 def hybrid_search(graph, query, top_k=10, custom_vector_weight=None):
-    """Fuse vector and graph retrieval with query-intent-dependent weights."""
+    """Main retrieval function - fuses vector similarity and graph traversal.
+
+    The key insight: vector search alone misses relationship queries like
+    "who authored the login fix?" because authorship isn't semantic content.
+    Graph traversal alone misses topical queries. Fusing both covers more ground.
+    """
     from embeddings import vector_search
 
+    # if user manually set weights via the slider, respect that
     if custom_vector_weight is not None:
         v_weight = max(0.0, min(1.0, float(custom_vector_weight)))
         weights = {"vector": round(v_weight, 2), "graph": round(1.0 - v_weight, 2)}
         intent = "relational" if v_weight < 0.5 else "semantic"
         intent_source = "custom_weight"
     else:
+        # auto-classify what kind of question this is
         intent, intent_source = classify_intent(query)
         if intent == "relational":
             weights = {"vector": 0.2, "graph": 0.8}
@@ -123,6 +138,8 @@ def hybrid_search(graph, query, top_k=10, custom_vector_weight=None):
             weights = {"vector": 0.8, "graph": 0.2}
 
     vector_results = vector_search(graph, query, top_k=top_k)
+
+    # for graph-heavy queries, seed from more vector hits to cast a wider net
     seed_count = 8 if (custom_vector_weight is not None and custom_vector_weight < 0.5) else 5
     graph_results = graph_search(
         graph,

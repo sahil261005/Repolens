@@ -1,4 +1,8 @@
-"""Small SQLite store for analysis summaries and query experiments."""
+"""SQLite storage for analysis summaries and query run history.
+
+Using sqlite because it's simple and built into python - no need for
+postgres or anything heavy for a project like this.
+"""
 
 import json
 import sqlite3
@@ -91,8 +95,9 @@ def recent_runs(repo=None, limit=20):
     with connection() as database:
         rows = database.execute(query, values).fetchall()
 
-    return [
-        {
+    runs = []
+    for row in rows:
+        runs.append({
             "id": row["id"],
             "repo": row["repo"],
             "query": row["query"],
@@ -101,9 +106,8 @@ def recent_runs(repo=None, limit=20):
             "trace": json.loads(row["trace"]),
             "latency_ms": row["latency_ms"],
             "created_at": row["created_at"],
-        }
-        for row in rows
-    ]
+        })
+    return runs
 
 
 def recent_analyses(limit=8):
@@ -112,11 +116,11 @@ def recent_analyses(limit=8):
             "SELECT * FROM analyses ORDER BY analyzed_at DESC LIMIT ?", (limit,)
         ).fetchall()
 
-    return [
-        {
+    results = []
+    for row in rows:
+        results.append({
             "repo": row["repo"],
             "stats": json.loads(row["stats"]),
             "analyzed_at": row["analyzed_at"],
-        }
-        for row in rows
-    ]
+        })
+    return results

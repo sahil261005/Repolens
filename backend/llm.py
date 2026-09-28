@@ -1,10 +1,12 @@
-"""Small Groq calls for query intent and retrieval-grounded answers."""
+"""Groq API calls for intent classification and answer generation."""
 
 import os
 
 from groq import Groq
 
 
+# try multiple models in order - groq's free tier sometimes rate-limits
+# specific models, so having fallbacks helps
 DEFAULT_MODELS = [
     os.getenv("GROQ_MODEL"),
     "qwen/qwen3.8-27b",
@@ -27,13 +29,17 @@ ANSWER_FAILURE = "The answer couldn't be generated. The retrieval results are st
 
 def get_client():
     api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
+    if not api_key or api_key.startswith("your_"):
         return None
     return Groq(api_key=api_key, timeout=6.0)
 
 
 def classify_intent(query):
-    """Return an intent and the source that made that routing decision."""
+    """Decide if a query is relational ("who authored X") or semantic ("how does X work").
+
+    Uses keyword matching first since it's instant and works for most cases.
+    Falls back to LLM classification for ambiguous queries.
+    """
     query_lower = query.lower()
 
     if any(keyword in query_lower for keyword in RELATIONAL_KEYWORDS):
@@ -41,6 +47,7 @@ def classify_intent(query):
     if any(keyword in query_lower for keyword in SEMANTIC_KEYWORDS):
         return "semantic", "keyword"
 
+    # keyword match didn't work, try asking the LLM
     client = get_client()
     if not client:
         return "semantic", "default"
@@ -70,7 +77,11 @@ def classify_intent(query):
 
 
 def generate_answer(query, results):
-    """Generate a concise answer that relies only on the retrieved evidence."""
+    """Generate an answer grounded only in the retrieved evidence.
+
+    Deliberately limits context to top 5 items - sending everything
+    made answers longer but not better, and used more tokens.
+    """
     client = get_client()
     if not client:
         return ANSWER_FAILURE

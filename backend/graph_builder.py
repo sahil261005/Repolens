@@ -1,4 +1,4 @@
-"""Build an in-memory graph from the GitHub data collected for a repository."""
+"""Builds an in-memory graph from GitHub repo data using NetworkX."""
 
 import re
 
@@ -7,7 +7,12 @@ import networkx as nx
 
 RESOLVE_PATTERN = re.compile(r"(?:fixes|closes|resolves)\s+#(\d+)", re.IGNORECASE)
 MENTION_PATTERN = re.compile(r"#(\d+)")
+
+# truncate long PR/issue bodies so they don't blow up the embedding model
 BODY_LIMIT = 500
+
+# edge weights - higher = stronger signal for the retriever
+# I tuned these manually by looking at what produced the best traversal results
 RELATION_WEIGHTS = {
     "AUTHORED": 0.95,
     "RESOLVES": 0.90,
@@ -17,18 +22,19 @@ RELATION_WEIGHTS = {
 
 
 def text_value(value):
-    """Return a safe string because GitHub fields can be missing or null."""
+    # github fields can be None or missing, this just handles that
     return value if isinstance(value, str) else ""
 
 
 def item_author(item):
-    """Read an author login from the compact API data or raw GitHub data."""
+    """Figure out who authored this item - handles both compact and raw github data."""
     author = item.get("author")
     if isinstance(author, dict):
         return text_value(author.get("login"))
     if isinstance(author, str):
         return author
 
+    # fallback for raw github response format
     user = item.get("user")
     if isinstance(user, dict):
         return text_value(user.get("login"))
@@ -71,7 +77,7 @@ def add_authored_edge(graph, node_id, item, relation):
 
 
 def add_item_node(graph, item, node_type):
-    """Add one PR, issue, or commit and return its stable graph node id."""
+    """Add a PR, issue, or commit node and return its id."""
     if node_type == "pull_request":
         number = item.get("number")
         node_id = f"pull_request:{number}"
@@ -98,7 +104,11 @@ def add_item_node(graph, item, node_type):
 
 
 def add_issue_links(graph, node_id, text):
-    """Add issue references only when that issue was included in this graph."""
+    """Link PRs/commits to issues they reference.
+
+    Only adds edges when the referenced issue actually exists in our graph,
+    otherwise we'd get dangling edges to issues we never fetched.
+    """
     resolved_numbers = set(RESOLVE_PATTERN.findall(text))
 
     for number in resolved_numbers:
@@ -125,7 +135,8 @@ def add_issue_links(graph, node_id, text):
 
 
 def build_graph(repo_data):
-    """Create a graph containing people, pull requests, issues, and commits."""
+    # using undirected graph - tried DiGraph first but for our traversal
+    # it doesn't matter if we go person->PR or PR->person
     graph = nx.Graph()
     link_sources = []
 
@@ -144,6 +155,7 @@ def build_graph(repo_data):
         add_authored_edge(graph, node_id, commit, "AUTHORED")
         link_sources.append((node_id, item_text(commit)))
 
+    # second pass - now that all nodes exist, we can safely link issues
     for node_id, text in link_sources:
         add_issue_links(graph, node_id, text)
 
@@ -151,7 +163,7 @@ def build_graph(repo_data):
 
 
 def graph_stats(graph):
-    """Return the counts shown in the UI and used for ingestion debugging."""
+    """Counts for the UI stats bar."""
     node_types = {}
     relations = {}
 
