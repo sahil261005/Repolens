@@ -1,4 +1,4 @@
-"""Repo knowledge health analysis for the Health Layer."""
+"""Health diagnostics for the repository's knowledge graph."""
 
 from collections import Counter
 
@@ -6,19 +6,21 @@ import networkx as nx
 
 
 def graph_density(graph):
-    """Return graph density (edges / possible edges)."""
     if graph.number_of_nodes() < 2:
         return 0.0
     return round(nx.density(graph), 4)
 
 
 def connected_components(graph):
-    """Return the number of isolated knowledge clusters."""
     return list(nx.connected_components(graph))
 
 
 def fragmentation_score(graph):
-    """Score how fragmented the graph is (0 = fully connected, 1 = isolated)."""
+    """0 = everything connected, 1 = completely isolated nodes.
+
+    Combines two signals: how dominant the largest component is,
+    and how many completely isolated nodes there are.
+    """
     if graph.number_of_nodes() < 2:
         return 0.0
     components = connected_components(graph)
@@ -28,11 +30,12 @@ def fragmentation_score(graph):
 
 
 def coverage_stats(graph):
-    """Analyze how well commits/issues are linked to discussions."""
+    """Check how well commits and PRs are linked to issues."""
     commit_nodes = [n for n, d in graph.nodes(data=True) if d.get("type") == "commit"]
     issue_nodes = [n for n, d in graph.nodes(data=True) if d.get("type") == "issue"]
     pr_nodes = [n for n, d in graph.nodes(data=True) if d.get("type") == "pull_request"]
 
+    # count how many commits reference at least one issue
     commit_refs = 0
     for node_id in commit_nodes:
         for _, _, data in graph.edges(node_id, data=True):
@@ -63,7 +66,7 @@ def coverage_stats(graph):
 
 
 def freshness_stats(graph):
-    """Return the age of the most recent activity in the graph."""
+    """How recent is the latest activity in the graph."""
     from datetime import datetime, timezone
 
     latest = None
@@ -84,123 +87,128 @@ def freshness_stats(graph):
         return {"age_days": None, "freshness": "unknown"}
 
     age_days = max(0, (datetime.now(timezone.utc) - latest).days)
-    freshness = (
-        "very_recent" if age_days <= 7
-        else "recent" if age_days <= 30
-        else "moderate" if age_days <= 90
-        else "stale"
-    )
+    if age_days <= 7:
+        freshness = "very_recent"
+    elif age_days <= 30:
+        freshness = "recent"
+    elif age_days <= 90:
+        freshness = "moderate"
+    else:
+        freshness = "stale"
+
     return {"age_days": age_days, "freshness": freshness}
 
 
 def coupling_stats(graph):
-    """Analyze PR-to-issue coupling (how well PRs link to issues)."""
+    """How well PRs link to issues (via Fixes/Closes/Mentions)."""
     pr_nodes = [n for n, d in graph.nodes(data=True) if d.get("type") == "pull_request"]
     resolved = 0
     mentioned = 0
-    for node_id in pr_nodes:
-        relations = [data.get("relation") for _, _, data in graph.edges(node_id, data=True)]
-        if "RESOLVES" in relations:
-            resolved += 1
-        elif "MENTIONS" in relations:
-            mentioned += 1
+    orphan = 0
 
+    for node_id in pr_nodes:
+        has_resolve = False
+        has_mention = False
+        for _, _, data in graph.edges(node_id, data=True):
+            rel = data.get("relation")
+            if rel == "RESOLVES":
+                has_resolve = True
+            elif rel == "MENTIONS":
+                has_mention = True
+
+        if has_resolve:
+            resolved += 1
+        elif has_mention:
+            mentioned += 1
+        else:
+            orphan += 1
+
+    total = len(pr_nodes) or 1
     return {
-        "prs_total": len(pr_nodes),
-        "prs_resolved": resolved,
-        "prs_mentioned": mentioned,
-        "coupling_rate": round(resolved / len(pr_nodes), 4) if pr_nodes else 0.0,
+        "total_prs": len(pr_nodes),
+        "resolves_count": resolved,
+        "mentions_count": mentioned,
+        "orphan_count": orphan,
+        "coupling_ratio": round((resolved + mentioned) / total, 4),
     }
 
 
 def health_report(graph):
-    """Compile the full repo knowledge health report."""
-    node_types = Counter(data.get("type", "unknown") for _, data in graph.nodes(data=True))
-    component_sizes = [len(c) for c in connected_components(graph)]
-
+    """Put together a full health report for the frontend."""
+    density = graph_density(graph)
+    frag = fragmentation_score(graph)
+    components = connected_components(graph)
     coverage = coverage_stats(graph)
     freshness = freshness_stats(graph)
     coupling = coupling_stats(graph)
 
-    density = graph_density(graph)
-    fragmentation = fragmentation_score(graph)
+    # generate actionable insights based on the metrics
+    insights = []
 
-    overall = "healthy"
-    if density < 0.05 and graph.number_of_nodes() > 20:
-        overall = "fragmented"
-    elif density < 0.12:
-        overall = "sparse"
+    if density < 0.05:
+        insights.append({
+            "severity": "warning",
+            "message": "Very sparse graph",
+            "suggestion": "The repository may have few cross-references between PRs and issues. "
+                         "Consider linking PRs to issues with 'Fixes #N' or 'Closes #N'.",
+        })
+
+    if frag > 0.5:
+        insights.append({
+            "severity": "warning",
+            "message": "Fragmented knowledge graph",
+            "suggestion": "Many isolated nodes. Contributors may be working in silos.",
+        })
+
+    if coverage.get("commit_issue_coverage", 0) < 0.3 and coverage.get("total_commits", 0) > 5:
+        insights.append({
+            "severity": "info",
+            "message": f"Only {round(coverage['commit_issue_coverage'] * 100)}% of commits reference issues",
+            "suggestion": "Linking commits to issues improves traceability and retrieval quality.",
+        })
+
+    if coupling.get("orphan_count", 0) > coupling.get("total_prs", 0) * 0.5:
+        insights.append({
+            "severity": "info",
+            "message": f"{coupling['orphan_count']} PRs have no issue references",
+            "suggestion": "Use 'Fixes #N' in PR descriptions to build stronger connections.",
+        })
+
+    if freshness.get("freshness") == "stale":
+        insights.append({
+            "severity": "info",
+            "message": f"Last activity was {freshness['age_days']} days ago",
+            "suggestion": "Stale repositories may have outdated information.",
+        })
+
+    # overall health: simple heuristic based on the metrics
+    # TODO: maybe weight these differently or make it configurable
+    score = 0
+    if density >= 0.05:
+        score += 1
+    if frag < 0.3:
+        score += 1
+    if coupling.get("coupling_ratio", 0) >= 0.4:
+        score += 1
+    if freshness.get("freshness") in ("very_recent", "recent"):
+        score += 1
+
+    if score >= 3:
+        overall = "healthy"
+    elif score >= 2:
+        overall = "moderate"
+    else:
+        overall = "needs_attention"
 
     return {
         "overall": overall,
+        "density": density,
+        "fragmentation": frag,
+        "component_count": len(components),
         "node_count": graph.number_of_nodes(),
         "edge_count": graph.number_of_edges(),
-        "node_types": dict(node_types),
-        "density": density,
-        "fragmentation": fragmentation,
-        "largest_component": max(component_sizes) if component_sizes else 0,
-        "component_count": len(component_sizes),
         "coverage": coverage,
         "freshness": freshness,
         "coupling": coupling,
-        "insights": build_insights(overall, density, fragmentation, coverage, freshness, coupling),
+        "insights": insights,
     }
-
-
-def build_insights(overall, density, fragmentation, coverage, freshness, coupling):
-    """Build human-readable health insights."""
-    insights = []
-
-    if overall == "fragmented":
-        insights.append(
-            {
-                "severity": "warning",
-                "message": "Graph is fragmented — knowledge is split into disconnected clusters.",
-                "suggestion": "Encourage PRs/issues to reference related issues to strengthen connectivity.",
-            }
-        )
-    elif overall == "sparse":
-        insights.append(
-            {
-                "severity": "info",
-                "message": "Graph is sparse — few relationships between items.",
-                "suggestion": "Retrieval may rely heavily on semantic search; graph traversal will be limited.",
-            }
-        )
-    else:
-        insights.append(
-            {
-                "severity": "success",
-                "message": "Graph is well-connected — graph traversal can reach most items.",
-                "suggestion": "Relational queries should perform well.",
-            }
-        )
-
-    if coverage.get("commit_issue_coverage", 0) < 0.3:
-        insights.append(
-            {
-                "severity": "warning",
-                "message": "Most commits don't reference issues — commit history is disconnected from problem tracking.",
-                "suggestion": "Adopt 'Fixes #N' conventions to link commits to issues.",
-            }
-        )
-
-    if coupling.get("coupling_rate", 0) < 0.5:
-        insights.append(
-            {
-                "severity": "info",
-                "message": "Many PRs don't explicitly resolve an issue.",
-                "suggestion": "Add 'Fixes #N' references to PR bodies for better traceability.",
-            }
-        )
-
-    if freshness.get("age_days") is not None and freshness.get("age_days", 999) > 180:
-        insights.append(
-            {
-                "severity": "info",
-                "message": "No recent activity — repository knowledge may be outdated.",
-                "suggestion": "Expect retrieval to rely on historical context; verify answers against current branches.",
-            }
-        )
-
-    return insights

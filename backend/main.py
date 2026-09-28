@@ -23,6 +23,9 @@ from storage import recent_analyses, recent_runs, save_analysis, save_query_run,
 
 load_dotenv()
 limiter = Limiter(key_func=get_remote_address)
+
+# simple LRU cache for analyzed repos - keeps the last 5 in memory
+# graphs + embeddings are lost on restart, which is fine for a demo
 repo_cache = OrderedDict()
 MAX_CACHED_REPOS = 5
 
@@ -115,7 +118,6 @@ def analyze_repository(request: Request, payload: AnalyzeRequest):
     stats = graph_stats(graph)
     stats["indexing_ms"] = round((time.perf_counter() - started_at) * 1000)
     
-    # Generate health report
     health = health_report(graph)
     
     save_analysis(repo, stats)
@@ -152,13 +154,13 @@ def get_history(repo: str | None = None):
 
 @app.get("/api/repo-health")
 def get_repo_health(repo: str):
-    """Return the knowledge health report for an analyzed repository."""
     graph = cached_graph(repo)
     return {"repo": repo, "health": health_report(graph)}
 
 
 @app.post("/api/subgraph")
 def get_subgraph(payload: SubgraphRequest):
+    """Return the immediate neighbourhood of selected nodes for the graph view."""
     graph = cached_graph(payload.repo)
     visible_nodes = set()
 
@@ -167,17 +169,17 @@ def get_subgraph(payload: SubgraphRequest):
             visible_nodes.add(node_id)
             visible_nodes.update(graph.neighbors(node_id))
 
-    nodes = [
-        {
+    nodes = []
+    for node_id in visible_nodes:
+        nodes.append({
             "id": node_id,
             "data": {
                 "label": graph.nodes[node_id].get("label", node_id),
                 "type": graph.nodes[node_id].get("type", "unknown"),
             },
             "position": {"x": 0, "y": 0},
-        }
-        for node_id in visible_nodes
-    ]
+        })
+
     edges = []
     for source, target, data in graph.edges(data=True):
         if source in visible_nodes and target in visible_nodes:

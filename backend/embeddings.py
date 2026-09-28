@@ -1,21 +1,21 @@
-"""Create local embeddings and search them with cosine similarity."""
+"""Local embeddings using sentence-transformers + numpy cosine search."""
 
 import os
 from pathlib import Path
 
-# Keep downloaded model files in the project rather than a global user cache.
+# keep downloaded model in the project dir instead of cluttering ~/.cache
 os.environ.setdefault("HF_HOME", str(Path(__file__).parent / ".cache"))
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 
-# The model is deliberately loaded once when the backend starts, not per query.
+# load once at startup - this was really slow when I was loading it per-request
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def embed_nodes(graph):
-    """Embed every graph node in one batch and save the vectors on the nodes."""
+    """Embed every graph node in one batch and store vectors on the node data."""
     nodes = list(graph.nodes(data=True))
     if not nodes:
         return graph
@@ -33,7 +33,7 @@ def embed_nodes(graph):
 
 
 def cosine_similarity(first, second):
-    """Return cosine similarity without pulling in a vector database."""
+    """Basic cosine similarity - no need for a vector DB at this scale."""
     first = np.asarray(first)
     second = np.asarray(second)
     denominator = np.linalg.norm(first) * np.linalg.norm(second)
@@ -43,7 +43,6 @@ def cosine_similarity(first, second):
 
 
 def vector_search(graph, query, top_k=10):
-    """Return the most semantically similar embedded graph nodes."""
     if not query or top_k <= 0:
         return []
 
